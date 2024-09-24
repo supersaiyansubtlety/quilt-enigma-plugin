@@ -290,6 +290,19 @@ public class NameProposalTest {
 	}
 
 	@Test
+	public void testSimpleTypeSingleNamesWithMapping() {
+		var classEntry = new ClassEntry("com/a/e");
+		var owner = new ClassEntry(classEntry, "b");
+
+		var vc = new ValidationContext(null);
+		remapper.putMapping(vc, field(owner, "a", "Ljava/lang/String;"), new EntryMapping("id"));
+
+		var constructor = method(owner, "<init>", "(Ljava/lang/String;Ljava/lang/CharSequence;)V");
+		assertDynamicProposal("id", localVar(constructor, 1));
+		assertProposal("identifier", localVar(constructor, 2));
+	}
+
+	@Test
 	public void testDelegateParameterNames() {
 		var classEntry = new ClassEntry("com/a/b");
 

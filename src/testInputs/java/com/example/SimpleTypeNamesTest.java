@@ -50,6 +50,14 @@ public class SimpleTypeNamesTest {
 		public static void config(Config config) {
 		}
 
+		private final String id;
+		private final CharSequence identifier;
+
+		public Parameters(String id, CharSequence identifier) {
+			this.id = id;
+			this.identifier = identifier;
+		}
+
 		public void pos(Pos pos) {
 		}
 
