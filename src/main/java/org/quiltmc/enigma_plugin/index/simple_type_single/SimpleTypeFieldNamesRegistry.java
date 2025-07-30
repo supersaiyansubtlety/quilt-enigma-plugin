@@ -17,6 +17,9 @@
 package org.quiltmc.enigma_plugin.index.simple_type_single;
 
 import org.jetbrains.annotations.Nullable;
+import org.quiltmc.enigma.api.analysis.index.jar.EntryIndex;
+import org.quiltmc.enigma.api.analysis.index.jar.JarIndex;
+import org.quiltmc.enigma.api.translation.representation.entry.ClassEntry;
 import org.quiltmc.enigma_plugin.util.CasingUtil;
 import org.quiltmc.parsers.json.JsonReader;
 import org.quiltmc.parsers.json.JsonToken;
@@ -26,21 +29,30 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
 
+import static org.quiltmc.enigma_plugin.index.simple_type_single.SimpleTypeSingleIndex.*;
+
 public class SimpleTypeFieldNamesRegistry {
 	private final Path path;
+	private final EntryIndex index;
+	private final TypeVerification typeVerification;
+
 	/**
 	 * Using a {@link LinkedHashMap} to ensure we keep the read order.
 	 */
 	private final Map<String, Entry> entries = new LinkedHashMap<>();
 
-	public SimpleTypeFieldNamesRegistry(Path path) {
+	public SimpleTypeFieldNamesRegistry(Path path, JarIndex jarIndex, TypeVerification typeVerification) {
 		this.path = path;
+		this.index = jarIndex.getIndex(EntryIndex.class);
+		this.typeVerification = typeVerification;
 	}
 
 	public @Nullable Entry getEntry(String type) {
@@ -59,6 +71,8 @@ public class SimpleTypeFieldNamesRegistry {
 
 			reader.beginObject();
 
+			Set<String> missingTypes = new HashSet<>();
+			boolean verify = this.typeVerification != TypeVerification.NONE;
 			while (reader.hasNext()) {
 				String type = reader.nextName();
 
@@ -69,6 +83,10 @@ public class SimpleTypeFieldNamesRegistry {
 
 				if (this.entries.containsKey(type)) {
 					throw new IllegalArgumentException("Duplicate type " + type);
+				}
+
+				if (verify && !this.index.hasClass(new ClassEntry(type))) {
+					missingTypes.add(type);
 				}
 
 				switch (reader.peek()) {
@@ -120,6 +138,27 @@ public class SimpleTypeFieldNamesRegistry {
 			}
 
 			reader.endObject();
+
+			if (verify) {
+				if (!missingTypes.isEmpty()) {
+					boolean single = missingTypes.size() == 1;
+					StringBuilder message = new StringBuilder("The following simple type field name type");
+					message.append(single ? " is" : "s are");
+					message.append(" missing:");
+
+					if (single) {
+						message.append(' ').append(missingTypes.iterator().next());
+					} else {
+						missingTypes.forEach(type -> message.append("\n\t").append(type));
+					}
+
+					if (this.typeVerification == TypeVerification.WARN) {
+						Logger.warn(message);
+					} else {
+						throw new IllegalStateException(message.toString());
+					}
+				}
+			}
 		} catch (IOException e) {
 			Logger.error(e, "Failed to read simple type field names registry.");
 		}

@@ -39,7 +39,6 @@ import org.quiltmc.enigma_plugin.index.Index;
 import org.quiltmc.enigma_plugin.index.simple_type_single.SimpleTypeFieldNamesRegistry.Name;
 import org.quiltmc.enigma_plugin.util.AsmUtil;
 import org.quiltmc.enigma_plugin.util.Descriptors;
-import org.tinylog.Logger;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -60,9 +59,9 @@ public class SimpleTypeSingleIndex extends Index {
 	private final Map<LocalVariableEntry, List<String>> parameterFallbacks = new HashMap<>();
 	private final Map<FieldEntry, String> fields = new HashMap<>();
 	private final Map<ClassNode, Map<String, FieldBuildingEntry>> fieldCache = new HashMap<>();
-	private final Set<String> unverifiedTypes = new HashSet<>();
 
 	private SimpleTypeFieldNamesRegistry registry;
+	private Path simpleTypeFieldNamesPath;
 	private InheritanceIndex inheritance;
 	private TypeVerification typeVerification = TypeVerification.DEFAULT;
 
@@ -94,33 +93,29 @@ public class SimpleTypeSingleIndex extends Index {
 			})
 			.orElse(TypeVerification.DEFAULT);
 
-		this.loadRegistry(context.getSingleArgument(Arguments.SIMPLE_TYPE_FIELD_NAMES_PATH)
-				.map(context::getPath).orElse(null));
+		this.simpleTypeFieldNamesPath = context.getSingleArgument(Arguments.SIMPLE_TYPE_FIELD_NAMES_PATH)
+			.map(context::getPath).orElse(null);
 	}
 
 	@Override
 	public void setIndexingContext(Set<String> classes, JarIndex jarIndex) {
 		this.inheritance = jarIndex.getIndex(InheritanceIndex.class);
+		this.loadRegistry(jarIndex);
 	}
 
-	public void loadRegistry(Path path) {
-		if (path == null) {
+	public void loadRegistry(JarIndex jarIndex) {
+		if (this.simpleTypeFieldNamesPath == null) {
 			this.registry = null;
 			return;
 		}
 
-		this.registry = new SimpleTypeFieldNamesRegistry(path);
+		this.registry = new SimpleTypeFieldNamesRegistry(this.simpleTypeFieldNamesPath, jarIndex, this.typeVerification);
 		this.registry.read();
-
-		this.unverifiedTypes.clear();
-		if (this.typeVerification != TypeVerification.NONE) {
-			this.registry.streamTypes().forEach(this.unverifiedTypes::add);
-		}
 	}
 
 	@Override
 	public boolean isEnabled() {
-		return this.registry != null;
+		return this.simpleTypeFieldNamesPath != null;
 	}
 
 	public void dropCache() {
@@ -147,29 +142,6 @@ public class SimpleTypeSingleIndex extends Index {
 		return this.parameters.keySet();
 	}
 
-	public void verifyTypes() {
-		if (this.typeVerification != TypeVerification.NONE) {
-			if (!this.unverifiedTypes.isEmpty()) {
-				boolean single = this.unverifiedTypes.size() == 1;
-				StringBuilder message = new StringBuilder("The following simple type field name type");
-				message.append(single ? " is" : "s are");
-				message.append(" missing:");
-
-				if (single) {
-					message.append(' ').append(this.unverifiedTypes.iterator().next());
-				} else {
-					this.unverifiedTypes.forEach(type -> message.append("\n\t").append(type));
-				}
-
-				if (this.typeVerification == TypeVerification.WARN) {
-					Logger.warn(message);
-				} else {
-					throw new IllegalStateException(message.toString());
-				}
-			}
-		}
-	}
-
 	@TestOnly
 	public List<LocalVariableEntry> getParamsOf(MethodEntry methodEntry) {
 		var params = new ArrayList<LocalVariableEntry>();
@@ -193,8 +165,6 @@ public class SimpleTypeSingleIndex extends Index {
 		if (!this.isEnabled()) return;
 
 		var parentEntry = new ClassEntry(node.name);
-
-		this.unverifiedTypes.remove(node.name);
 
 		this.collectMatchingFields(provider, node).forEach((name, entry) -> {
 			if (!entry.isNull()) {
@@ -262,7 +232,7 @@ public class SimpleTypeSingleIndex extends Index {
 				}
 			}
 
-			String type = this.verifyTypeOrNull(field.desc);
+			String type = this.getTypeOrNull(field.desc);
 			if (type == null) continue;
 
 			var entry = this.getEntry(type);
@@ -323,7 +293,7 @@ public class SimpleTypeSingleIndex extends Index {
 			if (bannedTypes.contains(parameters.get(index).type())) continue;
 
 			ParameterNode node = method.parameters.get(index);
-			String type = this.verifyTypeOrNull(parameters.get(index).getDescriptor());
+			String type = this.getTypeOrNull(parameters.get(index).getDescriptor());
 			if (type == null) continue;
 
 			var entry = this.getEntry(type);
@@ -389,14 +359,12 @@ public class SimpleTypeSingleIndex extends Index {
 	}
 
 	@Nullable
-	private String verifyTypeOrNull(String descriptor) {
+	private String getTypeOrNull(String descriptor) {
 		if (descriptor.charAt(0) != 'L') {
 			return null;
 		}
 
 		String type = descriptor.substring(1, descriptor.length() - 1);
-
-		this.unverifiedTypes.remove(type);
 
 		return type;
 	}
@@ -421,7 +389,7 @@ public class SimpleTypeSingleIndex extends Index {
 		}
 	}
 
-	private enum TypeVerification {
+	public enum TypeVerification {
 		NONE, WARN, THROW;
 
 		static final TypeVerification DEFAULT = WARN;
